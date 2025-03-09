@@ -49,4 +49,310 @@
     const letters = ["해", "피", "버", "스", "데", "이"]; // 먹어야 할 글자
     let letterIndex = 0;  // 현재 먹을 글자 인덱스
     let letterX = 0;      // 글자 위치 x (타일 단위)
-    let letterY = 0;     
+    let letterY = 0;      // 글자 위치 y (타일 단위)
+
+    // ===== 폭죽(파티클) 관련 =====
+    const particles = []; // 폭죽 파티클 배열
+    const maxParticles = 80; // 파티클 개수
+    let fireworksFrame = 0; // 폭죽 효과 진행도
+
+    // ===== 8비트 Happy Birthday 음악(멜로디) 관련 =====
+    // 간단한 “해피버스데이” 멜로디(도=C 기준, G4=392Hz 등) - 8비트 느낌을 위해 square wave 사용
+    // 멜로디 예시(반박자~한박자씩 단순 구현):
+    //   G4 G4 A4 G4   C5 B4
+    //   G4 G4 A4 G4   D5 C5
+    //   G4 G4 G5 E5   C5 B4 A4
+    //   F5 F5 E5 C5   D5 C5
+    const melody = [
+      { freq: 392, duration: 0.4 },  // G4
+      { freq: 392, duration: 0.4 },  // G4
+      { freq: 440, duration: 0.4 },  // A4
+      { freq: 392, duration: 0.4 },  // G4
+      { freq: 523, duration: 0.4 },  // C5
+      { freq: 494, duration: 0.6 },  // B4 (조금 길게)
+
+      { freq: 392, duration: 0.4 },
+      { freq: 392, duration: 0.4 },
+      { freq: 440, duration: 0.4 },
+      { freq: 392, duration: 0.4 },
+      { freq: 587, duration: 0.4 },  // D5
+      { freq: 523, duration: 0.6 },
+
+      { freq: 392, duration: 0.4 },
+      { freq: 392, duration: 0.4 },
+      { freq: 784, duration: 0.4 },  // G5
+      { freq: 659, duration: 0.4 },  // E5
+      { freq: 523, duration: 0.4 },
+      { freq: 494, duration: 0.4 },
+      { freq: 440, duration: 0.6 },
+
+      { freq: 698, duration: 0.4 },  // F5
+      { freq: 698, duration: 0.4 },
+      { freq: 659, duration: 0.4 },
+      { freq: 523, duration: 0.4 },
+      { freq: 587, duration: 0.4 },
+      { freq: 523, duration: 0.6 }
+    ];
+    let audioContext = null;  // 오디오 컨텍스트(브라우저에서 AudioContext 허용)
+
+    // 웹 오디오 API로 8비트풍(사각파) 노트 재생
+    function playBirthdaySong() {
+      // 한 번만 AudioContext를 만들고 재생
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      let currentTime = audioContext.currentTime;
+
+      melody.forEach(note => {
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+
+        // 사각파로 8비트 느낌
+        osc.type = "square";
+        osc.frequency.value = note.freq;
+
+        // 재생할 때 조금씩 볼륨을 줄여서 Pop 사운드를 줄임
+        gain.gain.setValueAtTime(0.2, currentTime);
+        gain.gain.linearRampToValueAtTime(0.0, currentTime + note.duration);
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+
+        osc.start(currentTime);
+        osc.stop(currentTime + note.duration);
+
+        // 다음 음이 시작될 시간
+        currentTime += note.duration;
+      });
+    }
+
+    // ===== 게임 초기화 함수 =====
+    function init() {
+      // 시작 위치, 속도 설정
+      snake = [
+        { x: 10, y: 10 }, // 뱀 머리
+        { x: 9,  y: 10 }, // 몸체
+        { x: 8,  y: 10 }  // 꼬리
+      ];
+      velocityX = 1;  // 처음엔 오른쪽으로 이동
+      velocityY = 0;
+
+      gameOver = false;
+      showFireworks = false;
+      letterIndex = 0;
+      score = 0;
+      
+      placeLetter();       // 첫 글자 배치
+      requestAnimationFrame(gameLoop);
+    }
+
+    // 글자(사과 대체) 위치를 랜덤으로 배치
+    function placeLetter() {
+      letterX = Math.floor(Math.random() * tileCount);
+      letterY = Math.floor(Math.random() * tileCount);
+    }
+
+    // 게임 루프 (애니메이션 프레임)
+    function gameLoop() {
+      if (showFireworks) {
+        // 글자를 전부 모았다면 폭죽 & 음악
+        updateFireworks();
+        drawFireworks();
+        requestAnimationFrame(gameLoop);
+        return;
+      }
+
+      if (gameOver) {
+        showGameOver();
+        return;
+      }
+      
+      update();
+      draw();
+      setTimeout(() => {
+        requestAnimationFrame(gameLoop);
+      }, 100); // 대략 0.1초 간격
+    }
+
+    // 키보드 이벤트 처리
+    document.addEventListener("keydown", (e) => {
+      switch (e.key) {
+        case "ArrowLeft":
+          if (velocityX !== 1) {
+            velocityX = -1;
+            velocityY = 0;
+          }
+          break;
+        case "ArrowUp":
+          if (velocityY !== 1) {
+            velocityX = 0;
+            velocityY = -1;
+          }
+          break;
+        case "ArrowRight":
+          if (velocityX !== -1) {
+            velocityX = 1;
+            velocityY = 0;
+          }
+          break;
+        case "ArrowDown":
+          if (velocityY !== -1) {
+            velocityX = 0;
+            velocityY = 1;
+          }
+          break;
+      }
+    });
+
+    // 게임 상태 갱신
+    function update() {
+      // 뱀 머리 새 위치 계산
+      const head = {
+        x: snake[0].x + velocityX,
+        y: snake[0].y + velocityY
+      };
+
+      // 벽 충돌 검사
+      if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+        gameOver = true;
+        return;
+      }
+
+      // 자기 자신과의 충돌 검사(머리 제외 몸통만)
+      for (let i = 1; i < snake.length; i++) {
+        if (snake[i].x === head.x && snake[i].y === head.y) {
+          gameOver = true;
+          return;
+        }
+      }
+
+      // 뱀 머리 추가
+      snake.unshift(head);
+
+      // 글자 먹었는지 확인
+      if (head.x === letterX && head.y === letterY) {
+        score++; 
+        letterIndex++;
+        if (letterIndex < letters.length) {
+          // 아직 남은 글자가 있으면 배치
+          placeLetter();
+        } else {
+          // 모든 글자를 다 먹었다면 폭죽+음악
+          showFireworks = true;
+          initFireworks();
+          playBirthdaySong(); // 8비트 음악 재생
+        }
+      } else {
+        // 먹지 못했다면 꼬리 제거
+        snake.pop();
+      }
+    }
+
+    // 게임 화면 그리기
+    function draw() {
+      // 배경 지우기
+      ctx.fillStyle = "#f9f9f9";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 뱀 그리기
+      ctx.fillStyle = "green";
+      for (let part of snake) {
+        ctx.fillRect(part.x * gridSize, part.y * gridSize, gridSize, gridSize);
+      }
+
+      // 현재 먹어야 할 글자(사과 대체) 그리기
+      if (letterIndex < letters.length) {
+        ctx.fillStyle = "blue";
+        ctx.font = "16px sans-serif";
+        ctx.fillText(
+          letters[letterIndex],
+          letterX * gridSize + 5, // 글자가 칸 중앙 부근에 위치
+          letterY * gridSize + 15
+        );
+      }
+
+      // 점수 표시
+      ctx.fillStyle = "#000";
+      ctx.font = "16px sans-serif";
+      ctx.fillText(`점수: ${score}`, 10, 20);
+    }
+
+    // 게임 오버 화면
+    function showGameOver() {
+      // 반투명 배경
+      ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 텍스트 표시
+      ctx.fillStyle = "#fff";
+      ctx.font = "30px sans-serif";
+      ctx.fillText("게임 오버!", canvas.width / 2 - 70, canvas.height / 2 - 10);
+      ctx.font = "20px sans-serif";
+      ctx.fillText(`점수: ${score}`, canvas.width / 2 - 30, canvas.height / 2 + 20);
+      ctx.font = "16px sans-serif";
+      ctx.fillText("새로고침(F5)으로 다시 시작하세요!", canvas.width / 2 - 120, canvas.height / 2 + 50);
+    }
+
+    // ===== 폭죽(파티클) 관련 함수 =====
+    function initFireworks() {
+      // 파티클 초기화
+      particles.length = 0;
+      for (let i = 0; i < maxParticles; i++) {
+        // 각 파티클마다 랜덤 위치, 속도, 크기, 투명도 설정
+        particles.push({
+          x: canvas.width / 2,
+          y: canvas.height / 2,
+          vx: (Math.random() - 0.5) * 10,
+          vy: (Math.random() - 0.5) * 10,
+          alpha: 1.0,
+          size: Math.random() * 5 + 2
+        });
+      }
+      fireworksFrame = 0;
+    }
+
+    function updateFireworks() {
+      fireworksFrame++;
+      particles.forEach(p => {
+        // 위치 이동
+        p.x += p.vx;
+        p.y += p.vy;
+        // 중력 효과
+        p.vy += 0.2;
+        // 점점 사라짐
+        p.alpha -= 0.01;
+      });
+    }
+
+    function drawFireworks() {
+      // 배경 약간 어둡게
+      ctx.fillStyle = "#111";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 파티클 그리기
+      particles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = "rgb(" + 
+          Math.floor(Math.random() * 255) + "," + 
+          Math.floor(Math.random() * 255) + "," + 
+          Math.floor(Math.random() * 255) + ")";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // 축하 문구
+      ctx.fillStyle = "#fff";
+      ctx.font = "30px sans-serif";
+      ctx.fillText("해피 버스 데이!", canvas.width / 2 - 100, canvas.height / 2);
+      ctx.font = "16px sans-serif";
+      ctx.fillText("축하합니다! 모든 글자를 모았습니다!", canvas.width / 2 - 110, canvas.height / 2 + 30);
+    }
+
+    // 초기 실행
+    init();
+  </script>
+</body>
+</html>
